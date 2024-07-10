@@ -1,0 +1,12 @@
+# Tooling
+.idea
+
+# Artifacts
+.cache
+build/
+compile_commands.json
+
+# Config
+sdkconfig
+sdkconfig.old
+
