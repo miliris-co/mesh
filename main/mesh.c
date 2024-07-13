@@ -89,7 +89,7 @@ static void log_proto_state() {
     ESP_DRAM_LOGI(TAG, "IEEE 802.15.4 state: %s", str);
 }
 
-void calculate_crc(ieee802154_frame_t *frame) {
+static void calculate_crc(ieee802154_frame_t *frame) {
     static uint8_t buf[MHR_SIZE+PAYLOAD_SIZE];
 
     memcpy(buf, (uint8_t *) &frame->mhr, MHR_SIZE);
