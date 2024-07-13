@@ -102,38 +102,6 @@ void calculate_crc(ieee802154_frame_t *frame) {
     frame->fcs = crc;
 }
 
-void IRAM_ATTR esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *ack_frame_info) {
-    if (ack != NULL) {
-        ESP_ERROR_CHECK(esp_ieee802154_receive_handle_done(ack));
-    }
-}
-
-void IRAM_ATTR esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_error_t error) {
-    switch (error) {
-    case ESP_IEEE802154_TX_ERR_NONE:
-        ESP_DRAM_LOGE(TAG, "Transmit: unknown error");
-        break;
-    case ESP_IEEE802154_TX_ERR_CCA_BUSY:
-        ESP_DRAM_LOGE(TAG, "Transmit: channel is busy");
-        break;
-    case ESP_IEEE802154_TX_ERR_ABORT:
-        ESP_DRAM_LOGE(TAG, "Transmit: abort");
-        break;
-    case ESP_IEEE802154_TX_ERR_NO_ACK:
-        ESP_DRAM_LOGE(TAG, "Transmit: no ack");
-        break;
-    case ESP_IEEE802154_TX_ERR_INVALID_ACK:
-        ESP_DRAM_LOGE(TAG, "Transmit: invalid ack");
-        break;
-    case ESP_IEEE802154_TX_ERR_COEXIST:
-        ESP_DRAM_LOGE(TAG, "Transmit: rejected by the coexist system");
-        break;
-    case ESP_IEEE802154_TX_ERR_SECURITY:
-        ESP_DRAM_LOGE(TAG, "Transmit: invalid sec config");
-        break;
-    }
-}
-
 static void mesh_proto_worker(void *pvParams) {
     uint8_t seq_num = 0;
 
@@ -167,6 +135,39 @@ static void mesh_proto_worker(void *pvParams) {
         esp_ieee802154_transmit(tx_frame, true);
     }
 }
+
+void IRAM_ATTR esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *ack_frame_info) {
+    if (ack != NULL) {
+        ESP_ERROR_CHECK(esp_ieee802154_receive_handle_done(ack));
+    }
+}
+
+void IRAM_ATTR esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_error_t error) {
+    switch (error) {
+    case ESP_IEEE802154_TX_ERR_NONE:
+        ESP_DRAM_LOGE(TAG, "Transmit: unknown error");
+        break;
+    case ESP_IEEE802154_TX_ERR_CCA_BUSY:
+        ESP_DRAM_LOGE(TAG, "Transmit: channel is busy");
+        break;
+    case ESP_IEEE802154_TX_ERR_ABORT:
+        ESP_DRAM_LOGE(TAG, "Transmit: abort");
+        break;
+    case ESP_IEEE802154_TX_ERR_NO_ACK:
+        ESP_DRAM_LOGE(TAG, "Transmit: no ack");
+        break;
+    case ESP_IEEE802154_TX_ERR_INVALID_ACK:
+        ESP_DRAM_LOGE(TAG, "Transmit: invalid ack");
+        break;
+    case ESP_IEEE802154_TX_ERR_COEXIST:
+        ESP_DRAM_LOGE(TAG, "Transmit: rejected by the coexist system");
+        break;
+    case ESP_IEEE802154_TX_ERR_SECURITY:
+        ESP_DRAM_LOGE(TAG, "Transmit: invalid sec config");
+        break;
+    }
+}
+
 
 void IRAM_ATTR esp_ieee802154_receive_done(uint8_t *rx_frame, esp_ieee802154_frame_info_t *frame_info) {
     ieee802154_frame_t *frame = (ieee802154_frame_t *) (rx_frame + 1);
