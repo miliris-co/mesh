@@ -41,8 +41,8 @@
 #define IEEE802154_SRC_ADDR_MODE_ONLY_EXT       (0b11 << 14)
 #define IEEE802154_SRC_ADDR_MODE_MASK           0xC000
 
-#define IEEE820154_DST_PAN_ID_BROADCAST         0xFFFF
-#define IEEE820154_DST_ADDR_BROADCAST           0xFFFF
+#define IEEE802154_DST_PAN_ID_BROADCAST         0xFFFF
+#define IEEE802154_DST_ADDR_BROADCAST           0xFFFF
 
 #define MHR_SIZE 11
 #define PAYLOAD_SIZE 96
@@ -115,8 +115,8 @@ static void mesh_proto_worker(void *pvParams) {
                                  IEEE802154_DST_ADDR_MODE_ONLY_SHORT |
                                  IEEE802154_SRC_ADDR_MODE_ONLY_SHORT,
                 .seq_num = seq_num++,
-                .dst_pan_id = IEEE820154_DST_PAN_ID_BROADCAST,
-                .dst_addr = IEEE820154_DST_ADDR_BROADCAST,
+                .dst_pan_id = IEEE802154_DST_PAN_ID_BROADCAST,
+                .dst_addr = IEEE802154_DST_ADDR_BROADCAST,
                 .src_pan_id = *(uint16_t *) pvParams,
                 .src_addr = 0x0001,
             },
@@ -201,7 +201,11 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_ieee802154_enable());
     ESP_ERROR_CHECK(esp_ieee802154_set_channel(26));
     ESP_ERROR_CHECK(esp_ieee802154_set_txpower(10));
-    ESP_ERROR_CHECK(esp_ieee802154_set_promiscuous(true));
+    ESP_ERROR_CHECK(esp_ieee802154_set_promiscuous(false));
+    ESP_ERROR_CHECK(esp_ieee802154_set_coordinator(false));
+    ESP_ERROR_CHECK(esp_ieee802154_set_pending_mode(ESP_IEEE802154_AUTO_PENDING_DISABLE));
+    ESP_ERROR_CHECK(esp_ieee802154_set_cca_mode(ESP_IEEE802154_CCA_MODE_ED));
+    ESP_ERROR_CHECK(esp_ieee802154_set_cca_threshold(-70));
 
     uint16_t pan_id;
 
@@ -214,12 +218,10 @@ void app_main(void) {
 
     ESP_LOGI(TAG, "PAN ID: %" PRIx16, pan_id);
     ESP_ERROR_CHECK(esp_ieee802154_set_panid(pan_id));
+    ESP_ERROR_CHECK(esp_ieee802154_set_short_address(0x0001));
 
-    ESP_ERROR_CHECK(esp_ieee802154_set_coordinator(true));
-    ESP_ERROR_CHECK(esp_ieee802154_set_pending_mode(ESP_IEEE802154_AUTO_PENDING_DISABLE));
-    ESP_ERROR_CHECK(esp_ieee802154_set_cca_mode(ESP_IEEE802154_CCA_MODE_ED));
-    ESP_ERROR_CHECK(esp_ieee802154_set_cca_threshold(-75));
     ESP_ERROR_CHECK(esp_ieee802154_set_rx_when_idle(true));
+    ESP_ERROR_CHECK(esp_ieee802154_receive());
 
     log_proto_state();
 
