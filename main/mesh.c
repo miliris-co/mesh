@@ -70,6 +70,22 @@ typedef struct {
     uint8_t pos;
 } circ_buf_t;
 
+typedef struct {
+    uint8_t mac_addr[8];
+    bool isolated;
+    union {
+        uint16_t pan_id;
+        uint16_t addr;
+    };
+} node_lookup_t;
+
+#define LOOKUP_TABLE_SIZE 16
+
+typedef struct {
+    node_lookup_t records[LOOKUP_TABLE_SIZE];
+    uint8_t len;
+} lookup_table_t;
+
 const static char *TAG = "MESH";
 
 static uint16_t node_pan_id = 0x0000;
@@ -88,6 +104,10 @@ static circ_buf_t relay_list = {
     .pos = 0,
 };
 
+static lookup_table_t lookup_table = {
+    .len = 0,
+};
+
 static void circ_buf_push(circ_buf_t *cb, uint16_t v) {
     cb->buf[cb->pos] = v;
     cb->pos = (cb->pos + 1) % CIRC_BUF_SIZE;
@@ -104,6 +124,25 @@ static bool circ_buf_match(circ_buf_t *cb, uint16_t v) {
         }
     }
     return false;
+}
+
+static int lookup_table_find_idx(uint8_t mac_addr[8]) {
+    for (uint8_t i = 0; i < lookup_table.len; i++) {
+        bool match = memcmp(lookup_table.records[i].mac_addr, mac_addr, 8) == 0;
+        if (match) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static bool lookup_table_add(node_lookup_t *entry) {
+    if (lookup_table.len == LOOKUP_TABLE_SIZE) {
+        return false;
+    }
+    lookup_table.records[lookup_table.len] = *entry;
+    lookup_table.len++;
+    return true;
 }
 
 static void log_proto_state(esp_log_level_t level) {
@@ -355,6 +394,9 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(err);
 
+    memset(rx_list.buf, 0, CIRC_BUF_SIZE);
+    memset(relay_list.buf, 0, CIRC_BUF_SIZE);
+
     ESP_ERROR_CHECK(esp_ieee802154_enable());
     ESP_ERROR_CHECK(esp_ieee802154_set_channel(26));
     ESP_ERROR_CHECK(esp_ieee802154_set_txpower(19));
@@ -389,4 +431,3 @@ void app_main(void) {
 
     fflush(stdout);
 }
-
