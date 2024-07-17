@@ -12,7 +12,6 @@
 #include "esp_ieee802154.h"
 #include "esp_ieee802154_types.h"
 #include "esp_random.h"
-#include "esp_crc.h"
 #include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -223,19 +222,6 @@ static uint16_t compute_frame_key(ieee802154_frame_t *frame) {
     return ((frame->mhr.src_addr & 0xFF) << 8) | frame->mhr.seq_num;
 }
 
-static void compute_crc(ieee802154_frame_t *frame) {
-    static uint8_t buf[MHR_SIZE+PAYLOAD_SIZE];
-
-    memcpy(buf, (uint8_t *) &frame->mhr, MHR_SIZE);
-    memcpy(buf + MHR_SIZE, frame->payload, PAYLOAD_SIZE);
-
-    uint16_t crc = 0x0000;
-
-    crc = esp_crc16_le(crc, buf, MHR_SIZE+PAYLOAD_SIZE);
-
-    frame->fcs = crc;
-}
-
 static void copy_data_frame(ieee802154_frame_t *dst, const ieee802154_frame_t *src) {
     dst->mhr.frame_control = IEEE802154_FRAME_VER_2006  |
                              IEEE802154_FRAME_TYPE_DATA |
@@ -339,7 +325,7 @@ _Noreturn static void tx_worker(void *params) {
 
     while (true) {
         if (xQueueReceive(tx_queue, &frame, portMAX_DELAY)) {
-            compute_crc(&frame);
+            frame.fcs = 0;
 
             memcpy(tx_frame + 1, (uint8_t *) &frame, FRAME_SIZE);
 
