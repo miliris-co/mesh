@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <sys/cdefs.h>
 
 #include "esp_attr.h"
 #include "esp_err.h"
@@ -17,6 +18,11 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "portmacro.h"
+
+#define MI_FRAME_TYPE_ID_REQ   (0b000 << 0)
+#define MI_FRAME_TYPE_ID       (0b001 << 0)
+#define MI_FRAME_TYPE_BLINK    (0b010 << 0)
+#define MI_FRAME_TYPE_MASK     0x07
 
 #define IEEE802154_FRAME_TYPE_BEACON    (0b000 << 0)
 #define IEEE802154_FRAME_TYPE_DATA      (0b001 << 0)
@@ -90,6 +96,8 @@ const static char *TAG = "MESH";
 
 static uint16_t node_pan_id = 0x0000;
 static uint16_t node_addr   = 0x0001;
+
+static bool isolated = true;
 
 static QueueHandle_t tx_queue = NULL;
 static QueueHandle_t rx_queue = NULL;
@@ -324,7 +332,7 @@ void IRAM_ATTR esp_ieee802154_receive_done(uint8_t *rx_frame, esp_ieee802154_fra
     }
 }
 
-static void tx_worker(void *params) {
+_Noreturn static void tx_worker(void *params) {
     static ieee802154_frame_t frame;
     static uint8_t tx_frame[FRAME_SIZE+1];
     tx_frame[0] = FRAME_SIZE;
@@ -340,7 +348,39 @@ static void tx_worker(void *params) {
     }
 }
 
-static void rx_worker(void *params) {
+static void handle_frame(ieee802154_frame_t *frame) {
+    static uint8_t resp[PAYLOAD_SIZE];
+    uint8_t mi_frame_type = frame->payload[0] & MI_FRAME_TYPE_MASK;
+
+    if (mi_frame_type == MI_FRAME_TYPE_ID_REQ) {
+        if (!isolated) {
+            return;
+        }
+
+        resp[0] = MI_FRAME_TYPE_ID;
+        esp_read_mac(resp + 1, ESP_MAC_IEEE802154);
+        send_data(resp, 9, IEEE802154_DST_PAN_ID_BROADCAST, IEEE802154_DST_ADDR_BROADCAST);
+    }
+
+    if (mi_frame_type == MI_FRAME_TYPE_ID) {
+        node_lookup_t entry = {
+                .isolated = true,
+                .pan_id   = frame->mhr.src_pan_id,
+        };
+
+        memcpy(entry.mac_addr, frame->payload + 1, 8);
+
+        int idx = lookup_table_find_idx(entry.mac_addr);
+
+        if (idx >= 0) {
+            lookup_table.records[idx] = entry;
+        } else {
+            lookup_table_add(&entry);
+        }
+    }
+}
+
+_Noreturn static void rx_worker(void *params) {
     static ieee802154_frame_t frame;
     static ieee802154_frame_t relay_frame;
 
@@ -363,6 +403,8 @@ static void rx_worker(void *params) {
 
                 // Handle frame
                 log_frame("Received frame:", &frame, ESP_LOG_DEBUG);
+
+                handle_frame(&frame);
             }
 
             if (
@@ -394,8 +436,8 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(err);
 
-    memset(rx_list.buf, 0, CIRC_BUF_SIZE);
-    memset(relay_list.buf, 0, CIRC_BUF_SIZE);
+    memset(rx_list.buf,    0, sizeof(uint16_t) * CIRC_BUF_SIZE);
+    memset(relay_list.buf, 0, sizeof(uint16_t) * CIRC_BUF_SIZE);
 
     ESP_ERROR_CHECK(esp_ieee802154_enable());
     ESP_ERROR_CHECK(esp_ieee802154_set_channel(26));
