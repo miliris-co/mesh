@@ -363,10 +363,15 @@ static void handle_frame(ieee802154_frame_t *frame) {
     }
 
     if (mi_frame_type == MI_FRAME_TYPE_ID) {
-        node_lookup_t entry = {
-                .isolated = true,
-                .pan_id   = frame->mhr.src_pan_id,
-        };
+        node_lookup_t entry;
+
+        if (frame->mhr.src_pan_id == node_pan_id) {
+            entry.isolated = false;
+            entry.addr     = frame->mhr.src_addr;
+        } else {
+            entry.isolated = true;
+            entry.pan_id   = frame->mhr.src_pan_id;
+        }
 
         memcpy(entry.mac_addr, frame->payload + 1, 8);
 
