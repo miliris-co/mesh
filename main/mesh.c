@@ -193,13 +193,13 @@ static void log_mac_addr(esp_log_level_t level) {
 }
 
 #define FRAME_LOG_FORMAT "%s\n"   \
-    "|---------FRAME---------|\n" \
-    "|Sequence Number: %s|\n"     \
-    "|Destination PAN: %s|\n"     \
-    "|Destination:     %s|\n"     \
-    "|Source PAN:      %s|\n"     \
-    "|Source:          %s|\n"     \
-    "|-----------------------|"
+    "|----------FRAME----------|\n" \
+    "| Sequence Number: %s |\n"     \
+    "| Destination PAN: %s |\n"     \
+    "| Destination:     %s |\n"     \
+    "| Source PAN:      %s |\n"     \
+    "| Source:          %s |\n"     \
+    "|-------------------------|"
 
 static void log_frame(const char* msg, ieee802154_frame_t *frame, esp_log_level_t level) {
     char seq_num_str[7];
