@@ -13,21 +13,26 @@
 #include "esp_ieee802154_types.h"
 #include "esp_random.h"
 #include "esp_mac.h"
+#include "driver/gpio.h"
+#include "driver/uart.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "portmacro.h"
 
+#define UART_TX_BUF_SIZE (512)
+#define UART_RX_BUF_SIZE (1024)
+
 #define MI_FRAME_TYPE_ID_REQ   (0b000 << 0)
 #define MI_FRAME_TYPE_ID       (0b001 << 0)
 #define MI_FRAME_TYPE_BLINK    (0b010 << 0)
-#define MI_FRAME_TYPE_MASK     0x07
+#define MI_FRAME_TYPE_MASK     (0x07)
 
 #define IEEE802154_FRAME_TYPE_BEACON    (0b000 << 0)
 #define IEEE802154_FRAME_TYPE_DATA      (0b001 << 0)
 #define IEEE802154_FRAME_TYPE_ACK       (0b010 << 0)
 #define IEEE802154_FRAME_TYPE_CMD       (0b011 << 0)
-#define IEEE802154_FRAME_TYPE_MASK      0x0007
+#define IEEE802154_FRAME_TYPE_MASK      (0x0007)
 
 #define IEEE802154_SEC_ENABLED          (1 << 3)
 #define IEEE802154_FRAME_PENDING        (1 << 4)
@@ -37,22 +42,22 @@
 #define IEEE802154_DST_ADDR_MODE_NONE           (0b00 << 10)
 #define IEEE802154_DST_ADDR_MODE_ONLY_SHORT     (0b10 << 10)
 #define IEEE802154_DST_ADDR_MODE_ONLY_EXT       (0b11 << 10)
-#define IEEE802154_DST_ADDR_MODE_MASK           0x0C00
+#define IEEE802154_DST_ADDR_MODE_MASK           (0x0C00)
 
 #define IEEE802154_FRAME_VER_2003       (0b00 << 12)
 #define IEEE802154_FRAME_VER_2006       (0b01 << 12)
-#define IEEE802154_FRAME_VER_MASK       0x3000
+#define IEEE802154_FRAME_VER_MASK       (0x3000)
 
 #define IEEE802154_SRC_ADDR_MODE_NONE           (0b00 << 14)
 #define IEEE802154_SRC_ADDR_MODE_ONLY_SHORT     (0b10 << 14)
 #define IEEE802154_SRC_ADDR_MODE_ONLY_EXT       (0b11 << 14)
-#define IEEE802154_SRC_ADDR_MODE_MASK           0xC000
+#define IEEE802154_SRC_ADDR_MODE_MASK           (0xC000)
 
-#define IEEE802154_DST_PAN_ID_BROADCAST         0xFFFF
-#define IEEE802154_DST_ADDR_BROADCAST           0xFFFF
+#define IEEE802154_DST_PAN_ID_BROADCAST         (0xFFFF)
+#define IEEE802154_DST_ADDR_BROADCAST           (0xFFFF)
 
-#define MHR_SIZE 11
-#define PAYLOAD_SIZE 114
+#define MHR_SIZE (11)
+#define PAYLOAD_SIZE (114)
 #define FRAME_SIZE (MHR_SIZE + PAYLOAD_SIZE + 2)
 
 typedef struct __attribute__((packed)) {
@@ -68,7 +73,7 @@ typedef struct __attribute__((packed)) {
     uint16_t fcs;
 } ieee802154_frame_t;
 
-#define CIRC_BUF_SIZE 255
+#define CIRC_BUF_SIZE (255)
 
 typedef struct {
     uint16_t buf[CIRC_BUF_SIZE];
@@ -84,22 +89,23 @@ typedef struct {
     };
 } node_lookup_t;
 
-#define LOOKUP_TABLE_SIZE 16
+#define LOOKUP_TABLE_SIZE (16)
 
 typedef struct {
     node_lookup_t records[LOOKUP_TABLE_SIZE];
     uint8_t len;
 } lookup_table_t;
 
-const static char *TAG = "MESH";
+static const char *TAG = "MESH";
 
 static uint16_t node_pan_id = 0x0000;
 static uint16_t node_addr   = 0x0001;
 
 static bool isolated = true;
 
-static QueueHandle_t tx_queue = NULL;
-static QueueHandle_t rx_queue = NULL;
+static QueueHandle_t tx_queue   = NULL;
+static QueueHandle_t rx_queue   = NULL;
+static QueueHandle_t uart_queue = NULL;
 
 static circ_buf_t rx_list = {
     .buf = { 0 },
@@ -323,7 +329,7 @@ _Noreturn static void tx_worker(void *params) {
     static uint8_t tx_frame[FRAME_SIZE+1];
     tx_frame[0] = FRAME_SIZE;
 
-    while (true) {
+    for (;;) {
         if (xQueueReceive(tx_queue, &frame, portMAX_DELAY)) {
             frame.fcs = 0;
 
@@ -375,7 +381,7 @@ _Noreturn static void rx_worker(void *params) {
     static ieee802154_frame_t frame;
     static ieee802154_frame_t relay_frame;
 
-    while (true) {
+    for (;;) {
         if (xQueueReceive(rx_queue, &frame, portMAX_DELAY)) {
             bool target_domain = frame.mhr.dst_pan_id == node_pan_id ||
                                  frame.mhr.dst_pan_id == IEEE802154_DST_PAN_ID_BROADCAST;
@@ -419,6 +425,41 @@ _Noreturn static void rx_worker(void *params) {
     }
 }
 
+static esp_err_t init_uart(void) {
+    esp_err_t res;
+
+    uart_config_t cfg = {
+        .baud_rate  = 38400,
+        .data_bits  = UART_DATA_8_BITS,
+        .parity     = UART_PARITY_DISABLE,
+        .stop_bits  = UART_STOP_BITS_1,
+        .flow_ctrl  = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+
+    res = uart_driver_install(UART_NUM_1, UART_RX_BUF_SIZE * 2, UART_TX_BUF_SIZE * 2, 16, &uart_queue, 0);
+    if (res != ESP_OK) {
+        return res;
+    }
+
+    res = uart_param_config(UART_NUM_1, &cfg);
+    if (res != ESP_OK) {
+        return res;
+    }
+
+    res = uart_set_pin(UART_NUM_1, GPIO_NUM_4, GPIO_NUM_5, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    if (res != ESP_OK) {
+        return res;
+    }
+
+    res = uart_enable_pattern_det_baud_intr(UART_NUM_1, '\n', 1, 9, 0, 0);
+    if (res != ESP_OK) {
+        return res;
+    }
+
+    return uart_pattern_queue_reset(UART_NUM_1, 16);
+}
+
 void app_main(void) {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -426,6 +467,8 @@ void app_main(void) {
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
+    ESP_ERROR_CHECK(init_uart());
 
     memset(rx_list.buf,    0, sizeof(uint16_t) * CIRC_BUF_SIZE);
     memset(relay_list.buf, 0, sizeof(uint16_t) * CIRC_BUF_SIZE);
@@ -439,7 +482,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_ieee802154_set_cca_mode(ESP_IEEE802154_CCA_MODE_ED));
     ESP_ERROR_CHECK(esp_ieee802154_set_cca_threshold(-70));
 
-    while (true) {
+    for (;;) {
         esp_fill_random(&node_pan_id, sizeof(node_pan_id));
 
         // TODO: Check for PAN collisions
@@ -459,8 +502,9 @@ void app_main(void) {
     tx_queue = xQueueCreate(8, FRAME_SIZE);
     rx_queue = xQueueCreate(8, FRAME_SIZE);
 
-    xTaskCreate(tx_worker, "tx_worker", 8192, NULL, 5, NULL);
-    xTaskCreate(rx_worker, "rx_worker", 8192, NULL, 5, NULL);
+    xTaskCreate(tx_worker,       "tx_worker",       8192, NULL, 5,  NULL);
+    xTaskCreate(rx_worker,       "rx_worker",       8192, NULL, 5,  NULL);
+    xTaskCreate(uart_event_task, "uart_event_task", 4096, NULL, 10, NULL);
 
     fflush(stdout);
 }
