@@ -21,7 +21,7 @@
 #include "portmacro.h"
 
 #define UART_TX_BUF_SIZE (512)
-#define UART_RX_BUF_SIZE (1024)
+#define UART_RX_BUF_SIZE (512)
 
 #define MI_FRAME_TYPE_ID_REQ   (0b000 << 0)
 #define MI_FRAME_TYPE_ID       (0b001 << 0)
@@ -437,7 +437,7 @@ static esp_err_t init_uart(void) {
         .source_clk = UART_SCLK_DEFAULT,
     };
 
-    res = uart_driver_install(UART_NUM_1, UART_RX_BUF_SIZE * 2, UART_TX_BUF_SIZE * 2, 16, &uart_queue, 0);
+    res = uart_driver_install(UART_NUM_1, UART_RX_BUF_SIZE * 2, UART_TX_BUF_SIZE * 2, 20, &uart_queue, 0);
     if (res != ESP_OK) {
         return res;
     }
@@ -447,17 +447,85 @@ static esp_err_t init_uart(void) {
         return res;
     }
 
-    res = uart_set_pin(UART_NUM_1, GPIO_NUM_4, GPIO_NUM_5, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    if (res != ESP_OK) {
-        return res;
-    }
+    return uart_set_pin(UART_NUM_1, GPIO_NUM_4, GPIO_NUM_5, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+}
 
-    res = uart_enable_pattern_det_baud_intr(UART_NUM_1, '\n', 1, 9, 0, 0);
-    if (res != ESP_OK) {
-        return res;
-    }
+static void handle_line(const char* line) {
+}
 
-    return uart_pattern_queue_reset(UART_NUM_1, 16);
+#define DEL 127
+
+_Noreturn static void uart_event_task(void *params) {
+    uart_event_t evt;
+
+    static uint8_t data[UART_RX_BUF_SIZE];
+    static uint8_t line_buf[128];
+    static size_t  line_len = 0;
+
+    memset(line_buf, 0, sizeof(line_buf));
+
+    for (;;) {
+        if (xQueueReceive(uart_queue, &evt, portMAX_DELAY)) {
+            switch (evt.type) {
+            case UART_DATA:
+                uart_read_bytes(UART_NUM_1, data, evt.size, portMAX_DELAY);
+
+                int last_line_break = -1;
+
+                for (int i = 0; i < evt.size; i++) {
+                    if (data[i] >= 32 && data[i] <= 126) {
+                        line_buf[line_len] = data[i];
+                        line_len++;
+                    }
+                    if (data[i] == '\n' || data[i] == '\r') {
+                        if (last_line_break == -1) {
+                            uart_write_bytes(UART_NUM_1, data, i);
+                        } else {
+                            uart_write_bytes(UART_NUM_1, data + last_line_break + 1, i - last_line_break - 1);
+                        }
+
+                        line_buf[line_len] = 0;
+                        handle_line((char *) line_buf);
+
+                        line_len = 0;
+                        last_line_break = i;
+                    }
+                    if ((data[i] == '\b' || data[i] == DEL) && line_len > 0) {
+                        uart_write_bytes(UART_NUM_1, "\b \b", sizeof("\b \b"));
+                        line_len--;
+                    }
+                }
+                if (last_line_break == -1) {
+                    uart_write_bytes(UART_NUM_1, data, evt.size);
+                } else if (last_line_break != (evt.size - 1)) {
+                    uart_write_bytes(UART_NUM_1, data + last_line_break + 1, evt.size - last_line_break - 1);
+                }
+                break;
+            case UART_FIFO_OVF:
+                ESP_LOGW(TAG, "HW FIFO overflow");
+                uart_flush_input(UART_NUM_1);
+                xQueueReset(uart_queue);
+                break;
+            case UART_BUFFER_FULL:
+                ESP_LOGW(TAG, "ring buffer full");
+                uart_flush_input(UART_NUM_1);
+                xQueueReset(uart_queue);
+                break;
+            case UART_BREAK:
+                ESP_LOGW(TAG, "UART RX break");
+                break;
+            case UART_PARITY_ERR:
+                ESP_LOGW(TAG, "UART parity error");
+                break;
+            case UART_FRAME_ERR:
+                ESP_LOGW(TAG, "UART frame error");
+                break;
+            default:
+                ESP_LOGI(TAG, "UART unhandled event, type: %d", evt.type);
+                break;
+            }
+        }
+    }
 }
 
 void app_main(void) {
@@ -469,6 +537,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(err);
 
     ESP_ERROR_CHECK(init_uart());
+    uart_write_bytes(UART_NUM_1, "> ", sizeof("> "));
 
     memset(rx_list.buf,    0, sizeof(uint16_t) * CIRC_BUF_SIZE);
     memset(relay_list.buf, 0, sizeof(uint16_t) * CIRC_BUF_SIZE);
@@ -499,12 +568,12 @@ void app_main(void) {
     ESP_LOGI(TAG, "PAN ID: 0x%04X", node_pan_id);
     log_proto_state(ESP_LOG_INFO);
 
-    tx_queue = xQueueCreate(8, FRAME_SIZE);
-    rx_queue = xQueueCreate(8, FRAME_SIZE);
+    tx_queue = xQueueCreate(10, FRAME_SIZE);
+    rx_queue = xQueueCreate(10, FRAME_SIZE);
 
     xTaskCreate(tx_worker,       "tx_worker",       8192, NULL, 5,  NULL);
     xTaskCreate(rx_worker,       "rx_worker",       8192, NULL, 5,  NULL);
-    xTaskCreate(uart_event_task, "uart_event_task", 4096, NULL, 10, NULL);
+    xTaskCreate(uart_event_task, "uart_event_task", 2048, NULL, 10, NULL);
 
     fflush(stdout);
 }
