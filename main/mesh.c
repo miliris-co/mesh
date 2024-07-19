@@ -450,7 +450,117 @@ static esp_err_t init_uart(void) {
     return uart_set_pin(UART_NUM_1, GPIO_NUM_4, GPIO_NUM_5, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 }
 
+static char** parse_args(const char *input, int *argc) {
+    char *input_copy = strdup(input);
+    if (input_copy == NULL) {
+        return NULL;
+    }
+
+    int max_args = 6;
+    char **argv = malloc(max_args * sizeof(char *));
+    if (argv == NULL) {
+        free(input_copy);
+        return NULL;
+    }
+
+    *argc = 0;
+    char *token = strtok(input_copy, " ");
+
+    while (token != NULL) {
+        if (*argc >= max_args) {
+            max_args *= 2;
+            char **temp = realloc(argv, max_args * sizeof(char *));
+            if (temp == NULL) {
+                for (int i = 0; i < *argc; i++) {
+                    free(argv[i]);
+                }
+                free(argv);
+                free(input_copy);
+                return NULL;
+            }
+            argv = temp;
+        }
+
+        argv[*argc] = strdup(token);
+        if (argv[*argc] == NULL) {
+            for (int i = 0; i < *argc; i++) {
+                free(argv[i]);
+            }
+            free(argv);
+            free(input_copy);
+            return NULL;
+        }
+
+        (*argc)++;
+
+        token = strtok(NULL, " ");
+    }
+
+    free(input_copy);
+    return argv;
+}
+
+static void free_args(int argc, char **argv) {
+    for (int i = 0; i < argc; i++) {
+        free(argv[i]);
+    }
+    free(argv);
+}
+
+#define UART_WRITE(str) uart_write_bytes(UART_NUM_1, str, sizeof(str))
+
+static void cmd_info(int argc, char **argv) {
+    UART_WRITE("INFO");
+}
+
+static void cmd_discover(int argc, char **argv) {
+    UART_WRITE("DISCOVER");
+}
+
+static void cmd_routes(int argc, char **argv) {
+    UART_WRITE("ROUTES");
+}
+
+static void cmd_blink(int argc, char **argv) {
+    UART_WRITE("BLINK");
+}
+
+#define STR_EQ_CMD(str, cmd) strncasecmp(str, cmd, sizeof(cmd)) == 0
+
 static void handle_line(const char* line) {
+    while (*line == ' ') line++;
+
+    if (line[0] == 0) {
+        UART_WRITE("\r\n> ");
+        return;
+    } else {
+        UART_WRITE("\r\n");
+    }
+
+    int argc;
+    char **argv = parse_args(line, &argc);
+    if (argv == NULL) {
+        ESP_LOGE(TAG, "Memory allocation failed");
+        return;
+    }
+
+    if (argc < 1) {
+        UART_WRITE("no arguments");
+    } else if (STR_EQ_CMD(argv[0], "info")) {
+        cmd_info(argc, argv);
+    } else if (STR_EQ_CMD(argv[0], "discover")) {
+        cmd_discover(argc, argv);
+    } else if (STR_EQ_CMD(argv[0], "routes")) {
+        cmd_routes(argc, argv);
+    } else if (STR_EQ_CMD(argv[0], "blink")) {
+        cmd_blink(argc, argv);
+    } else {
+        UART_WRITE("command not found");
+    }
+
+    UART_WRITE("\r\n> ");
+
+    free_args(argc, argv);
 }
 
 #define DEL 127
@@ -537,7 +647,9 @@ void app_main(void) {
     ESP_ERROR_CHECK(err);
 
     ESP_ERROR_CHECK(init_uart());
-    uart_write_bytes(UART_NUM_1, "> ", sizeof("> "));
+    UART_WRITE("\033[2J");
+    UART_WRITE("\033[H");
+    UART_WRITE("> ");
 
     memset(rx_list.buf,    0, sizeof(uint16_t) * CIRC_BUF_SIZE);
     memset(relay_list.buf, 0, sizeof(uint16_t) * CIRC_BUF_SIZE);
