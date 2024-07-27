@@ -525,11 +525,50 @@ static void cmd_info(int argc, char **argv) {
     sprintf(temp, ", address: 0x%04X", node_addr);
     strcat(str, temp);
 
-    uart_write_bytes(UART_NUM_1, str, strlen(str) - 1);
+    uart_write_bytes(UART_NUM_1, str, strlen(str));
 }
 
 static void cmd_discover(int argc, char **argv) {
-    UART_WRITE("DISCOVER");
+    UART_WRITE("Sending identification request...\r\n");
+
+    uint8_t data = MI_FRAME_TYPE_ID_REQ;
+    send_data(&data, 1, IEEE802154_DST_PAN_ID_BROADCAST, IEEE802154_DST_ADDR_BROADCAST);
+
+    UART_WRITE("Waiting for device responses...\r\n");
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    if (lookup_table.len == 0) {
+        UART_WRITE("No devices found.");
+        return;
+    }
+
+    UART_WRITE("Available devices:");
+
+    node_lookup_t *record = NULL;
+    for (int i = 0; i < lookup_table.len; i++) {
+        record = &lookup_table.records[i];
+        if (!record->isolated) {
+            continue;
+        }
+
+        char device_info[256] = { 0 };
+        char temp[64];
+
+        strcat(device_info, "\r\n");
+
+        const uint8_t *mac = record->mac_addr;
+        sprintf(temp, "MAC: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+                mac[0], mac[1], mac[2], mac[3],
+                mac[4], mac[5], mac[6], mac[7]);
+        strcat(device_info, temp);
+
+        sprintf(temp, ", PAN: 0x%04X", record->pan_id);
+        strcat(device_info, temp);
+
+        strcat(device_info, ", address: 0x0001");
+
+        uart_write_bytes(UART_NUM_1, device_info, strlen(device_info));
+    }
 }
 
 static void cmd_routes(int argc, char **argv) {
