@@ -507,10 +507,25 @@ static void free_args(int argc, char **argv) {
     free(argv);
 }
 
-#define UART_WRITE(str) uart_write_bytes(UART_NUM_1, str, sizeof(str))
+#define UART_WRITE(str) uart_write_bytes(UART_NUM_1, str, sizeof(str) - 1)
 
 static void cmd_info(int argc, char **argv) {
-    UART_WRITE("INFO");
+    char str[128] = { 0 };
+    char temp[32];
+
+    if (isolated) {
+        strcat(str, "isolated node");
+    } else {
+        strcat(str, (node_addr == 0x0001) ? "network controller" : "node");
+    }
+
+    sprintf(temp, ", PAN: 0x%04X", node_pan_id);
+    strcat(str, temp);
+
+    sprintf(temp, ", address: 0x%04X", node_addr);
+    strcat(str, temp);
+
+    uart_write_bytes(UART_NUM_1, str, strlen(str) - 1);
 }
 
 static void cmd_discover(int argc, char **argv) {
@@ -601,7 +616,7 @@ _Noreturn static void uart_event_task(void *params) {
                         last_line_break = i;
                     }
                     if ((data[i] == '\b' || data[i] == DEL) && line_len > 0) {
-                        uart_write_bytes(UART_NUM_1, "\b \b", sizeof("\b \b"));
+                        UART_WRITE("\b \b");
                         line_len--;
                     }
                 }
