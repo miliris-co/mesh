@@ -96,6 +96,8 @@ typedef struct {
     uint8_t len;
 } lookup_table_t;
 
+#define UART_WRITE(str) uart_write_bytes(UART_NUM_1, str, sizeof(str) - 1)
+
 static const char *TAG = "MESH";
 
 static uint16_t node_pan_id = 0x0000;
@@ -507,8 +509,6 @@ static void free_args(int argc, char **argv) {
     free(argv);
 }
 
-#define UART_WRITE(str) uart_write_bytes(UART_NUM_1, str, sizeof(str) - 1)
-
 static void cmd_info(int argc, char **argv) {
     char str[128] = { 0 };
     char temp[32];
@@ -572,7 +572,82 @@ static void cmd_discover(int argc, char **argv) {
 }
 
 static void cmd_routes(int argc, char **argv) {
-    UART_WRITE("ROUTES");
+    int peer_ids[LOOKUP_TABLE_SIZE];
+    int isolated_ids[LOOKUP_TABLE_SIZE];
+    int peer_count = 0;
+    int isolated_count = 0;
+    node_lookup_t *record = NULL;
+
+    for (int i = 0; i < lookup_table.len; i++) {
+        record = &lookup_table.records[i];
+
+        if (record->isolated) {
+            isolated_ids[isolated_count] = i;
+            isolated_count++;
+        } else {
+            peer_ids[peer_count] = i;
+            peer_count++;
+        }
+    }
+
+    if (peer_count > 0) {
+        UART_WRITE("Inside the network:");
+    }
+
+    for (int i = 0; i < peer_count; i++) {
+        int idx = peer_ids[i];
+        record = &lookup_table.records[idx];
+
+        char device_info[256] = { 0 };
+        char temp[64];
+
+        strcat(device_info, "\r\n");
+
+        const uint8_t *mac = record->mac_addr;
+        sprintf(temp, "MAC: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+                mac[0], mac[1], mac[2], mac[3],
+                mac[4], mac[5], mac[6], mac[7]);
+        strcat(device_info, temp);
+
+        sprintf(temp, ", PAN: 0x%04X", node_pan_id);
+        strcat(device_info, temp);
+
+        sprintf(temp, ", address: 0x%04X", record->addr);
+        strcat(device_info, temp);
+
+        uart_write_bytes(UART_NUM_1, device_info, strlen(device_info));
+    }
+
+    if (peer_count > 0 && isolated_count > 0) {
+        UART_WRITE("\r\n");
+    }
+
+    if (isolated_count > 0) {
+        UART_WRITE("Isolated:");
+    }
+
+    for (int i = 0; i < isolated_count; i++) {
+        int idx = isolated_ids[i];
+        record = &lookup_table.records[idx];
+
+        char device_info[256] = { 0 };
+        char temp[64];
+
+        strcat(device_info, "\r\n");
+
+        const uint8_t *mac = record->mac_addr;
+        sprintf(temp, "MAC: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+                mac[0], mac[1], mac[2], mac[3],
+                mac[4], mac[5], mac[6], mac[7]);
+        strcat(device_info, temp);
+
+        sprintf(temp, ", PAN: 0x%04X", record->pan_id);
+        strcat(device_info, temp);
+
+        strcat(device_info, ", address: 0x0001");
+
+        uart_write_bytes(UART_NUM_1, device_info, strlen(device_info));
+    }
 }
 
 static void cmd_blink(int argc, char **argv) {
