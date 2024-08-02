@@ -57,10 +57,11 @@
 #define IEEE802154_DST_ADDR_BROADCAST           (0xFFFF)
 
 #define MHR_SIZE (11)
-#define PAYLOAD_SIZE (114)
-#define FRAME_SIZE (MHR_SIZE + PAYLOAD_SIZE + 2)
+#define MAX_PAYLOAD_SIZE (114)
+#define FCS_SIZE (2)
+#define MAX_FRAME_SIZE (MHR_SIZE + MAX_PAYLOAD_SIZE + FCS_SIZE)
 
-typedef struct __attribute__((packed)) {
+typedef struct {
     struct __attribute__((packed)) {
         uint16_t frame_control;
         uint8_t  seq_num;
@@ -69,7 +70,8 @@ typedef struct __attribute__((packed)) {
         uint16_t src_pan_id;
         uint16_t src_addr;
     } mhr;
-    uint8_t  payload[PAYLOAD_SIZE];
+    uint8_t  payload_len;
+    uint8_t  payload[MAX_PAYLOAD_SIZE];
     uint16_t fcs;
 } ieee802154_frame_t;
 
@@ -233,20 +235,20 @@ static uint32_t compute_frame_key(ieee802154_frame_t *frame) {
            ((uint32_t) frame->mhr.seq_num);
 }
 
-static void copy_data_frame(ieee802154_frame_t *dst, const ieee802154_frame_t *src) {
-    dst->mhr.frame_control = IEEE802154_FRAME_VER_2006  |
-                             IEEE802154_FRAME_TYPE_DATA |
-                             IEEE802154_DST_ADDR_MODE_ONLY_SHORT |
-                             IEEE802154_SRC_ADDR_MODE_ONLY_SHORT;
-
-    dst->mhr.seq_num    = src->mhr.seq_num;
-    dst->mhr.dst_pan_id = src->mhr.dst_pan_id;
-    dst->mhr.dst_addr   = src->mhr.dst_addr;
-    dst->mhr.src_pan_id = src->mhr.src_pan_id;
-    dst->mhr.src_addr   = src->mhr.src_addr;
-
-    memcpy(dst->payload, src->payload, PAYLOAD_SIZE);
-}
+// static void copy_data_frame(ieee802154_frame_t *dst, const ieee802154_frame_t *src) {
+//     dst->mhr.frame_control = IEEE802154_FRAME_VER_2006  |
+//                              IEEE802154_FRAME_TYPE_DATA |
+//                              IEEE802154_DST_ADDR_MODE_ONLY_SHORT |
+//                              IEEE802154_SRC_ADDR_MODE_ONLY_SHORT;
+//
+//     dst->mhr.seq_num    = src->mhr.seq_num;
+//     dst->mhr.dst_pan_id = src->mhr.dst_pan_id;
+//     dst->mhr.dst_addr   = src->mhr.dst_addr;
+//     dst->mhr.src_pan_id = src->mhr.src_pan_id;
+//     dst->mhr.src_addr   = src->mhr.src_addr;
+//
+//     memcpy(dst->payload, src->payload, PAYLOAD_SIZE);
+// }
 
 static void send_data(const uint8_t *data, int len, uint16_t pan_id, uint16_t addr) {
     static uint8_t seq_num = 0;
@@ -266,13 +268,9 @@ static void send_data(const uint8_t *data, int len, uint16_t pan_id, uint16_t ad
         .fcs = 0,
     };
 
-    int copy_len = (len > PAYLOAD_SIZE) ? PAYLOAD_SIZE : len;
-
+    int copy_len = (len > MAX_PAYLOAD_SIZE) ? MAX_PAYLOAD_SIZE : len;
+    frame.payload_len = copy_len;
     memcpy(frame.payload, data, copy_len);
-
-    if (copy_len < PAYLOAD_SIZE) {
-        memset(frame.payload + copy_len, 0, PAYLOAD_SIZE - copy_len);
-    }
 
     BaseType_t task_woken = pdFALSE;
 
@@ -316,11 +314,16 @@ void IRAM_ATTR esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee8021
 }
 
 void IRAM_ATTR esp_ieee802154_receive_done(uint8_t *rx_frame, esp_ieee802154_frame_info_t *frame_info) {
-    ieee802154_frame_t *frame = (ieee802154_frame_t *) (rx_frame + 1);
+    static ieee802154_frame_t frame;
+
+    frame.payload_len = (*rx_frame) - MHR_SIZE - FCS_SIZE;
+
+    memcpy(&frame.mhr, rx_frame + 1, MHR_SIZE);
+    memcpy(frame.payload, rx_frame + 1 + MHR_SIZE, frame.payload_len);
 
     BaseType_t task_woken = pdFALSE;
 
-    xQueueSendToBackFromISR(rx_queue, frame, &task_woken);
+    xQueueSendToBackFromISR(rx_queue, &frame, &task_woken);
 
     ESP_ERROR_CHECK(esp_ieee802154_receive_handle_done(rx_frame));
 
@@ -348,14 +351,15 @@ void IRAM_ATTR esp_ieee802154_energy_detect_done(int8_t power) {
 
 _Noreturn static void tx_worker(void *params) {
     static ieee802154_frame_t frame;
-    static uint8_t tx_frame[FRAME_SIZE+1];
-    tx_frame[0] = FRAME_SIZE;
+    static uint8_t tx_frame[MAX_FRAME_SIZE+1];
 
     for (;;) {
         if (xQueueReceive(tx_queue, &frame, portMAX_DELAY)) {
-            frame.fcs = 0;
+            tx_frame[0] = MHR_SIZE + frame.payload_len + FCS_SIZE;
 
-            memcpy(tx_frame + 1, (uint8_t *) &frame, FRAME_SIZE);
+            memcpy(tx_frame + 1, &frame.mhr, MHR_SIZE);
+            memcpy(tx_frame + 1 + MHR_SIZE, frame.payload, frame.payload_len);
+            memset(tx_frame + 1 + MHR_SIZE + frame.payload_len, 0, FCS_SIZE);
 
             uint32_t delay_ms = esp_random() % 100;
             vTaskDelay(delay_ms / portTICK_PERIOD_MS);
@@ -391,7 +395,7 @@ _Noreturn static void tx_worker(void *params) {
 }
 
 static void handle_frame(ieee802154_frame_t *frame) {
-    static uint8_t resp[PAYLOAD_SIZE];
+    static uint8_t resp[MAX_PAYLOAD_SIZE];
     uint8_t mi_frame_type = frame->payload[0] & MI_FRAME_TYPE_MASK;
 
     if (mi_frame_type == MI_FRAME_TYPE_ID_REQ) {
@@ -828,8 +832,8 @@ void app_main(void) {
     UART_WRITE("\033[H");
     UART_WRITE("> ");
 
-    memset(rx_list.buf,    0, sizeof(uint16_t) * CIRC_BUF_SIZE);
-    memset(relay_list.buf, 0, sizeof(uint16_t) * CIRC_BUF_SIZE);
+    memset(rx_list.buf,    0, sizeof(uint32_t) * CIRC_BUF_SIZE);
+    memset(relay_list.buf, 0, sizeof(uint32_t) * CIRC_BUF_SIZE);
 
     ESP_ERROR_CHECK(esp_ieee802154_enable());
     ESP_ERROR_CHECK(esp_ieee802154_set_channel(26));
@@ -857,8 +861,8 @@ void app_main(void) {
     ESP_LOGI(TAG, "PAN ID: 0x%04X", node_pan_id);
     log_proto_state(ESP_LOG_INFO);
 
-    tx_queue = xQueueCreate(10, FRAME_SIZE);
-    rx_queue = xQueueCreate(10, FRAME_SIZE);
+    tx_queue = xQueueCreate(10, MAX_FRAME_SIZE);
+    rx_queue = xQueueCreate(10, MAX_FRAME_SIZE);
     ed_queue = xQueueCreate(1,  sizeof(int8_t));
 
     xTaskCreate(tx_worker,       "tx_worker",       8192, NULL, 5,  NULL);
