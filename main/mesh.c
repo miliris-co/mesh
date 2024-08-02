@@ -339,6 +339,11 @@ void IRAM_ATTR esp_ieee802154_energy_detect_done(int8_t power) {
     }
 }
 
+#define CCA_ATTEMPTS_MAX    (5)
+#define CCA_THRESHOLD       (-65)
+#define BACKOFF_MIN_MS      (1)
+#define BACKOFF_MAX_MS      (5)
+
 _Noreturn static void tx_worker(void *params) {
     static ieee802154_frame_t frame;
     static uint8_t tx_frame[FRAME_SIZE+1];
@@ -350,15 +355,35 @@ _Noreturn static void tx_worker(void *params) {
 
             memcpy(tx_frame + 1, (uint8_t *) &frame, FRAME_SIZE);
 
-            uint32_t backoff_time = esp_random() % 100;
-            vTaskDelay(backoff_time / portTICK_PERIOD_MS);
+            uint32_t delay_ms = esp_random() % 100;
+            vTaskDelay(delay_ms / portTICK_PERIOD_MS);
 
-            ESP_ERROR_CHECK(esp_ieee802154_energy_detect(256));
+            bool transmission_success = false;
+            int cca_attempts = 0;
 
-            int8_t power;
-            xQueueReceive(ed_queue, &power, portMAX_DELAY);
+            while (!transmission_success && cca_attempts < CCA_ATTEMPTS_MAX) {
+                ESP_ERROR_CHECK(esp_ieee802154_energy_detect(256));
+                int8_t power;
+                xQueueReceive(ed_queue, &power, portMAX_DELAY);
 
-            esp_ieee802154_transmit(tx_frame, false);
+                if (power < CCA_THRESHOLD) {
+                    esp_err_t result = esp_ieee802154_transmit(tx_frame, false);
+                    if (result == ESP_OK) {
+                        transmission_success = true;
+                    } else {
+                        ESP_LOGE(TAG, "Transmission failed: %s", esp_err_to_name(result));
+                    }
+                } else {
+                    uint32_t backoff_time_ms = (esp_random() % (BACKOFF_MAX_MS - BACKOFF_MIN_MS + 1)) + BACKOFF_MIN_MS;
+                    vTaskDelay(backoff_time_ms / portTICK_PERIOD_MS);
+                }
+
+                cca_attempts++;
+            }
+
+            if (!transmission_success) {
+                ESP_LOGE(TAG, "Failed to transmit after %d CCA attempts", CCA_ATTEMPTS_MAX);
+            }
         }
     }
 }
@@ -811,7 +836,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_ieee802154_set_coordinator(false));
     ESP_ERROR_CHECK(esp_ieee802154_set_pending_mode(ESP_IEEE802154_AUTO_PENDING_DISABLE));
     ESP_ERROR_CHECK(esp_ieee802154_set_cca_mode(ESP_IEEE802154_CCA_MODE_ED));
-    ESP_ERROR_CHECK(esp_ieee802154_set_cca_threshold(-70));
+    ESP_ERROR_CHECK(esp_ieee802154_set_cca_threshold(CCA_THRESHOLD));
 
     for (;;) {
         esp_fill_random(&node_pan_id, sizeof(node_pan_id));
