@@ -76,7 +76,7 @@ typedef struct __attribute__((packed)) {
 #define CIRC_BUF_SIZE (255)
 
 typedef struct {
-    uint16_t buf[CIRC_BUF_SIZE];
+    uint32_t buf[CIRC_BUF_SIZE];
     uint8_t pos;
 } circ_buf_t;
 
@@ -124,12 +124,12 @@ static lookup_table_t lookup_table = {
     .len = 0,
 };
 
-static void circ_buf_push(circ_buf_t *cb, uint16_t v) {
+static void circ_buf_push(circ_buf_t *cb, uint32_t v) {
     cb->buf[cb->pos] = v;
     cb->pos = (cb->pos + 1) % CIRC_BUF_SIZE;
 }
 
-static bool circ_buf_match(circ_buf_t *cb, uint16_t v) {
+static bool circ_buf_match(circ_buf_t *cb, uint32_t v) {
     for (size_t i = 0; i < CIRC_BUF_SIZE; i++) {
         size_t idx = (cb->pos - 1 - i + CIRC_BUF_SIZE) % CIRC_BUF_SIZE;
         if (cb->buf[idx] == 0) {
@@ -227,8 +227,10 @@ static void log_frame(const char* msg, ieee802154_frame_t *frame, esp_log_level_
              dst_pan_id_str, dst_addr_str, src_pan_id_str, src_addr_str);
 }
 
-static uint16_t compute_frame_key(ieee802154_frame_t *frame) {
-    return ((frame->mhr.src_addr & 0xFF) << 8) | frame->mhr.seq_num;
+static uint32_t compute_frame_key(ieee802154_frame_t *frame) {
+    return ((uint32_t) frame->mhr.src_pan_id << 16) |
+           (((uint32_t) frame->mhr.src_addr & 0xFF) << 8) |
+           ((uint32_t) frame->mhr.seq_num);
 }
 
 static void copy_data_frame(ieee802154_frame_t *dst, const ieee802154_frame_t *src) {
@@ -437,7 +439,7 @@ _Noreturn static void rx_worker(void *params) {
             bool target_node = frame.mhr.dst_addr == node_addr ||
                                frame.mhr.dst_addr == IEEE802154_DST_ADDR_BROADCAST;
 
-            uint16_t frame_key = compute_frame_key(&frame);
+            uint32_t frame_key = compute_frame_key(&frame);
             uint16_t frame_type = frame.mhr.frame_control & IEEE802154_FRAME_TYPE_MASK;
 
             if (target_domain && target_node) {
@@ -464,7 +466,7 @@ _Noreturn static void rx_worker(void *params) {
                 circ_buf_push(&relay_list, frame_key);
 
                 // Relay frame
-                log_frame("Relayed frame:", &frame, ESP_LOG_DEBUG);
+                // log_frame("Relayed frame:", &frame, ESP_LOG_DEBUG);
 
                 // copy_data_frame(&relay_frame, &frame);
                 // xQueueSendToBack(tx_queue, &relay_frame, 0);
