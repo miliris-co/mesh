@@ -107,6 +107,7 @@ static bool isolated = true;
 
 static QueueHandle_t tx_queue   = NULL;
 static QueueHandle_t rx_queue   = NULL;
+static QueueHandle_t ed_queue   = NULL;
 static QueueHandle_t uart_queue = NULL;
 
 static circ_buf_t rx_list = {
@@ -326,6 +327,18 @@ void IRAM_ATTR esp_ieee802154_receive_done(uint8_t *rx_frame, esp_ieee802154_fra
     }
 }
 
+void IRAM_ATTR esp_ieee802154_energy_detect_done(int8_t power) {
+    ESP_DRAM_LOGD(TAG, "Energy detect: %d dBm", power);
+
+    BaseType_t task_woken = pdFALSE;
+
+    xQueueSendToBackFromISR(ed_queue, &power, &task_woken);
+
+    if (task_woken) {
+        portYIELD_FROM_ISR();
+    }
+}
+
 _Noreturn static void tx_worker(void *params) {
     static ieee802154_frame_t frame;
     static uint8_t tx_frame[FRAME_SIZE+1];
@@ -336,6 +349,14 @@ _Noreturn static void tx_worker(void *params) {
             frame.fcs = 0;
 
             memcpy(tx_frame + 1, (uint8_t *) &frame, FRAME_SIZE);
+
+            uint32_t backoff_time = esp_random() % 100;
+            vTaskDelay(backoff_time / portTICK_PERIOD_MS);
+
+            ESP_ERROR_CHECK(esp_ieee802154_energy_detect(256));
+
+            int8_t power;
+            xQueueReceive(ed_queue, &power, portMAX_DELAY);
 
             esp_ieee802154_transmit(tx_frame, false);
         }
@@ -811,6 +832,7 @@ void app_main(void) {
 
     tx_queue = xQueueCreate(10, FRAME_SIZE);
     rx_queue = xQueueCreate(10, FRAME_SIZE);
+    ed_queue = xQueueCreate(1,  sizeof(int8_t));
 
     xTaskCreate(tx_worker,       "tx_worker",       8192, NULL, 5,  NULL);
     xTaskCreate(rx_worker,       "rx_worker",       8192, NULL, 5,  NULL);
