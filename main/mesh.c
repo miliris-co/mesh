@@ -441,8 +441,8 @@ _Noreturn static void rx_worker(void *params) {
                 // Relay frame
                 log_frame("Relayed frame:", &frame, ESP_LOG_DEBUG);
 
-                copy_data_frame(&relay_frame, &frame);
-                xQueueSendToBack(tx_queue, &relay_frame, 0);
+                // copy_data_frame(&relay_frame, &frame);
+                // xQueueSendToBack(tx_queue, &relay_frame, 0);
             }
         }
     }
