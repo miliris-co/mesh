@@ -257,6 +257,7 @@ static void send_data(const uint8_t *data, int len, uint16_t pan_id, uint16_t ad
         .mhr = {
             .frame_control = IEEE802154_FRAME_VER_2006  |
                              IEEE802154_FRAME_TYPE_DATA |
+                             IEEE802154_ACK_REQ |
                              IEEE802154_DST_ADDR_MODE_ONLY_SHORT |
                              IEEE802154_SRC_ADDR_MODE_ONLY_SHORT,
             .seq_num    = seq_num++,
